@@ -1,36 +1,30 @@
-# Use buildx syntax
-FROM --platform=$TARGETPLATFORM python:3.9-slim
-
-# Add platform-specific arguments
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
+# Set base image
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies with platform-specific considerations
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y \
     build-essential \
     python3-dev \
-    tesseract-ocr \
     git \
-    # Handle platform-specific dependencies
-    $(case "${TARGETPLATFORM}" in \
-        "linux/amd64") echo "amd64-specific-package" ;; \
-        "linux/arm64") echo "arm64-specific-package" ;; \
-        *) echo "Unsupported platform: ${TARGETPLATFORM}" && exit 1 ;; \
-    esac) \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster pip installs
-RUN pip install "uv==$(pip index versions uv | grep -v 'a|b|rc' | head -n1)"
+RUN pip install --upgrade pip && \
+    pip install uv
 
-# Copy requirements file
+# Copy requirements.txt
 COPY requirements.txt .
 
-# Install Python dependencies using uv
-RUN uv pip install --no-cache-dir -r requirements.txt
+# Install PyTorch CPU dependencies first
+ENV PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN uv pip install --system --no-cache-dir torch==2.3.1+cpu torchvision==0.18.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
+RUN uv pip install --system --no-cache-dir -r requirements.txt
 
 # Create model directory and set it as a volume
 RUN mkdir -p /app/model_artifacts
@@ -39,20 +33,8 @@ ENV DOCLING_MODELS_PATH=/app/model_artifacts
 # Copy the model download script
 COPY download_models.py .
 
-# Download models during build with platform-specific handling
-RUN case "${TARGETPLATFORM}" in \
-        "linux/amd64") \
-            echo "Downloading models for amd64..." && \
-            python download_models.py \
-            ;; \
-        "linux/arm64") \
-            echo "Downloading models for arm64..." && \
-            python download_models.py \
-            ;; \
-        *) \
-            echo "Unsupported platform: ${TARGETPLATFORM}" && exit 1 \
-            ;; \
-    esac
+# Download models
+RUN python download_models.py
 
 # Create directories for document processing
 RUN mkdir -p /app/document_queue /app/document_processed
